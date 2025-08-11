@@ -78,9 +78,10 @@ jobs:
         uses: chrnorm/deployment-action@v2
         id: deployment
         with:
-          token: ${{ steps.generate-token.outputs.token || secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GITHUB_TOKEN }}
           environment-url: https://${{ env.FQDN }}
           environment: ${{ inputs.target_domain == 'openfront.io' && 'prod' || 'staging' }}
+
 
       - name: 🔗 Log in to Docker Hub
         uses: docker/login-action@v3
