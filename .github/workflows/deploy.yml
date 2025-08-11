@@ -1,8 +1,6 @@
 name: 🚀 Deploy
 
 on:
-  # Allow contributors to schedule manual deployments.
-  # Permission to deploy can be restricted by requiring approval in environment configuration.
   workflow_dispatch:
     inputs:
       target_domain:
@@ -28,8 +26,6 @@ on:
         default: ""
         type: string
 
-  # Automatic deployment on push
-  # See https://docs.github.com/en/actions/writing-workflows/workflow-syntax-for-github-actions#onpushpull_requestpull_request_targetpathspaths-ignore
   push:
     branches:
       - "*"
@@ -42,9 +38,8 @@ concurrency:
 
 jobs:
   deploy:
-    # Don't deploy on push if this is a fork
+    # Still keeps the "no auto deploy from fork" rule for pushes
     if: ${{ github.event_name == 'workflow_dispatch' || github.repository == 'openfrontio/OpenFrontIO' }}
-    # Use different logic based on event type
     name: Deploy to ${{ inputs.target_domain || 'openfront.dev' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -54,6 +49,7 @@ jobs:
       SUBDOMAIN: ${{ github.event_name == 'push' && github.ref_name || inputs.target_subdomain || 'main' }}
     steps:
       - uses: actions/checkout@v4
+
       - name: 📝 Update job summary
         env:
           FQDN: ${{ env.SUBDOMAIN && format('{0}.{1}', env.SUBDOMAIN, env.DOMAIN) || env.DOMAIN || 'openfront.dev' }}
@@ -61,34 +57,37 @@ jobs:
           echo "FQDN=$FQDN" >> $GITHUB_ENV
           cat <<EOF >> $GITHUB_STEP_SUMMARY
           ### In progress :ship:
-
           Deploying from $GITHUB_REF to $FQDN
           EOF
+
       - uses: actions/create-github-app-token@v2
         id: generate-token
         if: ${{ github.repository == 'openfrontio/OpenFrontIO' }}
         with:
           app-id: ${{ vars.APP_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
       - name: Export the token
-        if: ${{ github.repository == 'openfrontio/OpenFrontIO' }}
         env:
-          GH_TOKEN: ${{ steps.generate-token.outputs.token }}
+          GH_TOKEN: ${{ steps.generate-token.outputs.token || secrets.GITHUB_TOKEN }}
         run: |
           echo "GH_TOKEN=$GH_TOKEN" >> $GITHUB_ENV
           gh api octocat
+
       - name: 📝 Create deployment
         uses: chrnorm/deployment-action@v2
         id: deployment
         with:
-          token: ${{ steps.generate-token.outputs.token }}
+          token: ${{ steps.generate-token.outputs.token || secrets.GITHUB_TOKEN }}
           environment-url: https://${{ env.FQDN }}
           environment: ${{ inputs.target_domain == 'openfront.io' && 'prod' || 'staging' }}
+
       - name: 🔗 Log in to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ vars.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
+
       - name: 🔑 Create SSH private key
         env:
           SERVER_HOST_MASTERS: ${{ secrets.SERVER_HOST_MASTERS }}
@@ -103,6 +102,7 @@ jobs:
           test -n "$SERVER_HOST_NBG1" && ssh-keyscan -H "$SERVER_HOST_NBG1" >> ~/.ssh/known_hosts
           test -n "$SERVER_HOST_STAGING" && ssh-keyscan -H "$SERVER_HOST_STAGING" >> ~/.ssh/known_hosts
           chmod 600 ~/.ssh/id_rsa
+
       - name: 🚢 Deploy
         env:
           ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN }}
@@ -130,6 +130,7 @@ jobs:
           ./build-deploy.sh "$ENV" "$HOST" "$SUBDOMAIN"
           echo "Deployment created in ${SECONDS} seconds" >> $GITHUB_STEP_SUMMARY
           echo "::endgroup::"
+
       - name: ⏳ Wait for deployment to start
         run: |
           echo "::group::Wait for deployment to start"
@@ -143,35 +144,37 @@ jobs:
           done
           echo "Deployment started in ${SECONDS} seconds" >> $GITHUB_STEP_SUMMARY
           echo "::endgroup::"
+
       - name: ✅ Update deployment status
         if: success()
         uses: chrnorm/deployment-status@v2
         with:
-          token: ${{ steps.generate-token.outputs.token }}
+          token: ${{ steps.generate-token.outputs.token || secrets.GITHUB_TOKEN }}
           environment-url: https://${{ env.FQDN }}
           state: success
           deployment-id: ${{ steps.deployment.outputs.deployment_id }}
+
       - name: ✅ Update job summary
         if: success()
         run: |
           cat <<EOF >> $GITHUB_STEP_SUMMARY
           ### Success! :rocket:
-
           Deployed from $GITHUB_REF to $FQDN
           EOF
+
       - name: ❌ Update deployment status
         if: failure()
         uses: chrnorm/deployment-status@v2
         with:
-          token: ${{ steps.generate-token.outputs.token }}
+          token: ${{ steps.generate-token.outputs.token || secrets.GITHUB_TOKEN }}
           environment-url: https://${{ env.FQDN }}
           state: failure
           deployment-id: ${{ steps.deployment.outputs.deployment_id }}
+
       - name: ❌ Update job summary
         if: failure()
         run: |
           cat <<EOF >> $GITHUB_STEP_SUMMARY
           ### Failure! :fire:
-
           Unable to deploy from $GITHUB_REF to $FQDN
           EOF
